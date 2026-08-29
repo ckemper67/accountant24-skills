@@ -26,7 +26,10 @@ workspace.
 
 <!-- Keep this list in sync with the top-level skill folders. -->
 
-_None yet._
+- **recurring-expenses** - detects the payments you make on a schedule (bills
+  plus subscriptions) from 13 months of history and caches them in
+  `recurring-expenses.md` at the workspace root. A builder for that cache, not
+  a report; other skills read the file instead of re-deriving it.
 
 ## Repository layout
 
