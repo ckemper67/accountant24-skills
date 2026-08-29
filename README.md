@@ -26,7 +26,11 @@ workspace.
 
 <!-- Keep this list in sync with the top-level skill folders. -->
 
-_None yet._
+- **payee-audit** - flags payees in the wrong or inconsistent expense account
+  (or `expenses:uncategorized`), spots spelling variants of the same merchant
+  and proposes unifying them first, then offers to apply the fixes with
+  `bulk_edit_transactions`. Bundles `map_payees.py` (stdlib `python3`, with a
+  by-hand fallback).
 
 ## Repository layout
 
