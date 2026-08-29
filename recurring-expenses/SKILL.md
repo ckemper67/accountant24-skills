@@ -49,16 +49,12 @@ or transfer activity) and compare its `Txns`, `Payees/descriptions`, and
 `Accounts` counts against the cached fingerprint.
 
 - **Fresh** - fingerprint matches and refreshed within the last 14 days:
-  nothing to do. If a caller still wants the latest, fold in only what changed
-  since `Last refreshed:` with one narrow `query` (`report: "reg"`,
-  `account_pattern: "Expenses"`, `begin_date: <last refreshed date>`,
-  `output_format: "csv"`) - new charges, price changes, series that went
-  quiet - and rewrite the file.
+  nothing to do, use the file as it stands.
 - **Stale, missing, or forced** - fingerprint mismatch, older than 14 days,
-  absent, or the user asked for a refresh: run the full detection below and
-  rewrite the file. A fingerprint mismatch means the ledger changed under the
-  cache (a backfill, a payee rename, an account cleanup), so redo the whole
-  detection - no narrow top-up.
+  absent, or the user asked for a refresh: run the full 13-month detection
+  below and rewrite the whole file. There is no partial-update path - always
+  redo the full detection so `First charged`, cadence, and the price history
+  stay derived from the same window.
 
 ## Detecting recurring charges
 
@@ -77,23 +73,30 @@ that structure and use detection only to fill the gaps.
    is a line reading "References are relative to `<path>`." - that `<path>` is
    the directory this file lives in; use it directly, do not guess an absolute
    path. Do not write ad-hoc bash/awk to group the rows yourself - that is
-   exactly what the script does (payee grouping with case/whitespace folding,
-   distinct-month counts, interval sequence, cadence guess, regularity score,
-   amount shape, approx-monthly normalization, and an overdue flag). It needs
-   only Python's standard library.
+   exactly what the script does (grouping by payee + commodity with
+   case/whitespace folding, distinct-month counts, interval sequence, cadence
+   guess, regularity score, amount shape, approx-monthly normalization, and an
+   overdue flag). It needs only Python's standard library, and handles both
+   `1,234.56` and `1.234,56` decimal styles.
    - Output: a `#`-commented header naming the columns, then one tab-separated
      line per candidate payee, sorted by `recurring` guess (`yes`, `weak`,
-     `no`) then approx monthly cost. A trailing `#` line reports how many
-     payees it dropped for too little history. Pass `--today YYYY-MM-DD` only
-     to reproduce a past run.
+     `no`), then approx monthly cost DESCENDING, then payee. One payee can
+     appear on two rows if it was charged in two commodities - keep them
+     separate. A trailing `#` line reports groups dropped for too little
+     history and rows dropped while reading; if it exits non-zero with "no
+     usable expense postings", the CSV is empty or wrong - do not read that
+     as "nothing recurs". Pass `--today YYYY-MM-DD` only to reproduce a past
+     run.
    - If `python3` is not on PATH, fall back to doing steps 3-7 by hand from
      the CSV - group by payee, count distinct months, check interval
      regularity - slower and more error-prone, but keeps the skill working.
 3. Take the script's `yes` rows as recurring. Review every `weak` row
    yourself: a `banded` shape with high `regularity` and a bills-type account
-   (utilities, phone) is a real metered bill - keep it; a `weak` row that is
-   really irregular shopping - drop it. Ignore `no` rows unless the account
-   or payee name clearly says otherwise.
+   (utilities, phone) is a real metered bill - keep it; a two-charge row
+   (`postings` = 2, so cadence rests on a single interval) needs a third
+   charge or clear real-world knowledge before you trust it; a `weak` row
+   that is really irregular shopping - drop it. Ignore `no` rows unless the
+   account or payee name clearly says otherwise.
 4. Regularity beats frequency: a payee with `cadence: irregular` (groceries,
    restaurants, fuel - bought when needed) is not recurring, no matter how
    many postings it has.
@@ -135,26 +138,26 @@ a parser, so no format beyond readable tables.
 
 Last refreshed: 2026-08-29
 Ledger fingerprint: 812 txns, 143 payees, 37 accounts
-Currency: EUR
+Currencies: EUR
 
 ## Bills and fixed obligations
 
-| Payee | Account | Cadence | Amount | Approx monthly | First charged | Last charged | Next expected | Notes |
-|---|---|---|---|---|---|---|---|---|
-| Landlord | Expenses:Rent | monthly | 1450 | 1450 | 2024-01-01 | 2026-08-01 | 2026-09-01 | |
-| City Utilities | Expenses:Utilities | monthly | ~90-140 | 115 | 2024-01-15 | 2026-08-14 | 2026-09-14 | amount varies |
+| Payee | Account | Currency | Cadence | Amount | Approx monthly | First charged | Last charged | Next expected | Notes |
+|---|---|---|---|---|---|---|---|---|---|
+| Landlord | Expenses:Rent | EUR | monthly | 1450 | 1450 | 2024-01-01 | 2026-08-01 | 2026-09-01 | |
+| City Utilities | Expenses:Utilities | EUR | monthly | ~90-140 | 115 | 2024-01-15 | 2026-08-14 | 2026-09-14 | amount varies |
 
 ## Subscriptions and memberships
 
-| Payee | Account | Cadence | Amount | Approx monthly | First charged | Last charged | Next expected | Notes |
-|---|---|---|---|---|---|---|---|---|
-| Netflix | Expenses:Subscriptions | monthly | 12.99 | 12.99 | 2024-03-11 | 2026-08-11 | 2026-09-11 | merged from 3 spellings |
+| Payee | Account | Currency | Cadence | Amount | Approx monthly | First charged | Last charged | Next expected | Notes |
+|---|---|---|---|---|---|---|---|---|---|
+| Netflix | Expenses:Subscriptions | EUR | monthly | 12.99 | 12.99 | 2024-03-11 | 2026-08-11 | 2026-09-11 | merged from 3 spellings |
 
 ## Totals
 
 - Per month: 1738 EUR
 - Per year: 20856 EUR
-(If several currencies appear, one line per currency. Never convert.)
+(One line per currency. Never convert.)
 
 ## Price increases
 
@@ -169,18 +172,27 @@ Column notes:
 
 - **Payee** - the normalized name (spelling variants merged).
 - **Account** - the full expense account, e.g. `Expenses:Utilities`.
+- **Currency** - the commodity the charge is in. The script groups by
+  payee + commodity, so a payee billed in two currencies is two rows; keep
+  them separate and never merge or convert them.
 - **Amount** - a single figure, a `A -> B` step for a price change, or a
   `~low-high` range for a metered bill.
 - **Approx monthly** - the amount normalized to a month (annual / 12,
-  quarterly / 3, weekly x 52 / 12); the average for a banded bill.
+  quarterly / 3, weekly x 52 / 12); the average for a banded bill. Copy the
+  script's `approx_monthly`.
 - **First charged** - earliest charge date seen in the 13-month window; treat
   it as "at least since" for anything older than the window.
 - **Next expected** - last charged + cadence.
 - **Notes** - short flags only ("amount varies", "merged from 3 spellings");
   empty when there is nothing to say.
-- **Price increases** and **Expected but not seen** - fill these in even when
-  empty (keep the heading with "- none"), because consumers read them
-  directly rather than re-deriving.
+- **Price increases** - only real ongoing series (3+ charges, a `step`
+  shape). Do not list a step inferred from a two-charge row - that is as
+  likely a one-off as a price change.
+- **Expected but not seen** - only rows you classified as recurring whose
+  `status` is `overdue`. Keep an irregular/`no` payee out of it.
+- **Price increases** and **Expected but not seen** - keep the heading even
+  when empty (write "- none"), because consumers read them directly rather
+  than re-deriving.
 
 ## Memory pointer
 
@@ -202,6 +214,14 @@ memory on later refreshes.
 - `detect_recurring.py` aggregates; it never decides. Merging real-merchant
   spelling variants, judging a borderline cadence, and classifying bills vs
   subscriptions are yours to do from its output.
-- If the ledger covers less than ~3 months, say the history is too short to
-  detect recurrence and write no cache. Annual patterns need more than a year
-  of history - note that in the file when the ledger is younger than that.
+- A short history still gets a written cache, never a re-triggering blank.
+  The script already detects monthly and weekly series from as little as two
+  charges (one interval), returning them as `recurring: weak` - write those.
+  Only when the script emits no rows at all (roughly: under ~6 weeks of
+  history, or nothing charged twice on a recognizable cadence) write the
+  file with just the `Last refreshed:` / `Ledger fingerprint:` lines, a
+  `Status: history too short - no series detected` line, and empty tables.
+  Tell the user which case applies.
+- Annual and quarterly patterns need more than a year of history; when the
+  ledger is younger than that, add a `Notes:` line to the file saying they
+  may be missed.

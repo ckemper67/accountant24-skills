@@ -25,15 +25,31 @@ it by hand and get it subtly wrong across dozens of payees):
   * approx monthly cost, normalized for the cadence
   * a status flag: active, or overdue (last charge older than the cadence
     implies - a candidate for "expected but not seen")
+  * a recurrence guess: `yes` (>= 2 intervals, regularity >= 0.75, a clean
+    identical/step amount), `weak` (a real cadence but thin evidence - only
+    one interval, a wobbly regularity, or a banded amount), or `no`.
+
+A group is a candidate when it was charged in 3+ distinct months, OR its gaps
+already fit a cadence (so a 2-month-old ledger still yields its monthly bills,
+as `weak`).
 
 What this does NOT do - left to the model: merging spelling variants that
-differ by more than case, deciding whether a borderline cadence is real,
-classifying bills vs subscriptions, naming a merged payee.
+differ by more than case, deciding whether a `weak` row is real, classifying
+bills vs subscriptions, naming a merged payee.
+
+Amounts: either ',' or '.' may be the decimal mark (hledger follows the
+journal's `decimal-mark`). "1,234.56" and "1.234,56" both parse to 1234.56.
+A lone separator with exactly 3 trailing digits ("1,234" / "1.234") is read
+as a thousands separator -> 1234; with 1-2 trailing digits it is the decimal
+mark. A 3-decimal commodity written without a thousands separator (e.g.
+"12.999 KWD") is therefore misread as 12999 - a known limitation.
 
 Output: tab-separated, one line per candidate payee, sorted by recurrence
-guess then approx monthly cost descending. A leading "#"-commented header
-names the columns. A trailing "#"-commented line reports how many payees were
-dropped for having fewer than 3 charge months (and were not annual pairs).
+guess, then approx monthly cost DESCENDING, then payee and commodity (so the
+order is stable across re-runs and unaffected by input row order). A leading
+"#" header names the columns; a trailing "#" line reports groups dropped for
+too little history and rows dropped while reading. Exits non-zero with a
+message if no usable postings were read.
 
 Standard library only - the vendored interpreter has no pip. If python3 is
 not available, the skill falls back to doing this by hand.
@@ -45,8 +61,10 @@ from collections import Counter, defaultdict
 from datetime import date, datetime
 from statistics import median
 
-# amount cell: "-12.99 EUR", "1,234.56 USD", "$12.99", "USD 12.99"
-_NUM = r"-?\d[\d,]*\.?\d*"
+# One amount in a reg cell: an optional commodity ("$" or a 2-5 letter code,
+# before or after), then a number that may carry ',' and '.' group/decimal
+# marks. Cost annotations ("100 USD @ 0.92 EUR") are cut before matching.
+_NUM = r"-?\d[\d.,]*\d|-?\d"
 AMOUNT_RE = re.compile(rf"(?:(?P<pre>[A-Za-z]{{2,5}}|\$)\s*)?(?P<num>{_NUM})(?:\s*(?P<post>[A-Za-z]{{2,5}}))?")
 
 # label: (min_days, max_days, days_per_period) - first bucket a median
@@ -62,20 +80,49 @@ CADENCES = [
 DAYS_PER_MONTH = 30.44
 
 
+def parse_number(text):
+    """Parse a number string that may use ',' or '.' as the decimal mark and
+    the other as a thousands separator. Returns a float, or None if `text`
+    holds no digit.
+    """
+    text = text.strip()
+    sign = -1.0 if text.startswith("-") else 1.0
+    body = text.lstrip("+-").strip()
+    if not any(c.isdigit() for c in body):
+        return None
+    has_comma, has_dot = "," in body, "." in body
+    if has_comma and has_dot:
+        # the separator that appears last is the decimal mark
+        dec = "," if body.rfind(",") > body.rfind(".") else "."
+        thou = "." if dec == "," else ","
+        body = body.replace(thou, "").replace(dec, ".")
+    elif has_comma or has_dot:
+        sep = "," if has_comma else "."
+        head, _, tail = body.rpartition(sep)
+        if body.count(sep) > 1 or (len(tail) == 3 and head.isdigit()):
+            body = body.replace(sep, "")          # thousands grouping
+        else:
+            body = body.replace(sep, ".")          # decimal mark
+    return sign * float(body)
+
+
 def parse_amounts(cell):
     """Yield (commodity, value) for each amount in a reg amount cell.
 
-    Commodity defaults to "?" when hledger emitted a bare number.
+    Commodity defaults to "?" when hledger emitted a bare number. A cost
+    annotation ("... @ PRICE" / "... @@ TOTAL") is dropped before parsing so
+    the exchange rate is not mistaken for a second charge.
     """
     cell = cell.strip()
     if not cell:
         return
+    cell = cell.split("@", 1)[0]
     for m in AMOUNT_RE.finditer(cell):
-        num = m.group("num")
-        if num in ("", "-", None):
+        value = parse_number(m.group("num"))
+        if value is None:
             continue
         commodity = m.group("pre") or m.group("post") or "?"
-        yield commodity, float(num.replace(",", ""))
+        yield commodity, value
 
 
 def payee_of(description):
@@ -97,9 +144,15 @@ def parse_date(s):
 
 
 def read_postings(path):
-    """Return list of (payee_raw, norm, commodity, date, amount, account) for
-    every positive expense posting in the reg CSV."""
+    """Return (postings, drops).
+
+    postings: list of (payee_raw, norm, commodity, date, amount, account) for
+    every positive expense posting in the reg CSV.
+    drops: {reason: count} for rows skipped, so the caller can tell an empty
+    result ("no recurring expenses") from an unreadable or wrong file.
+    """
     out = []
+    drops = {"no_payee_or_account": 0, "bad_date": 0, "no_positive_amount": 0}
     with open(path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         required = {"date", "description", "account", "amount"}
@@ -110,16 +163,22 @@ def read_postings(path):
             payee = payee_of(row.get("description", ""))
             account = (row.get("account") or "").strip()
             if not payee or not account:
+                drops["no_payee_or_account"] += 1
                 continue
             try:
-                d = parse_date(row["date"])
+                d = parse_date(row.get("date", ""))
             except ValueError:
+                drops["bad_date"] += 1
                 continue
+            posted = False
             for commodity, value in parse_amounts(row.get("amount", "")):
                 if value <= 0:  # keep charges only; refunds/credits are not the recurring series
                     continue
                 out.append((payee, norm_payee(payee), commodity, d, value, account))
-    return out
+                posted = True
+            if not posted:
+                drops["no_positive_amount"] += 1
+    return out, drops
 
 
 def guess_cadence(intervals):
@@ -138,7 +197,8 @@ def guess_cadence(intervals):
             return label, dpp, round(fit, 2)
     lo, hi = 0.5 * med, 1.5 * med
     fit = sum(1 for iv in intervals if lo <= iv <= hi) / len(intervals)
-    return "irregular", med or 0.0, round(fit, 2)
+    # med is >= 1: intervals are gaps between distinct sorted dates.
+    return "irregular", med, round(fit, 2)
 
 
 def classify_amounts(dated_amounts):
@@ -185,8 +245,12 @@ def analyze(postings, today):
 
     cadence, dpp, regularity = guess_cadence(intervals)
 
-    annual_pair = len(postings) >= 2 and len(intervals) >= 1 and cadence in ("yearly", "semiannual")
-    if len(months) < 3 and not annual_pair:
+    # Normally a candidate needs 3+ charge months. A younger series still
+    # counts if its gaps already point at a real cadence (a 2-month-old ledger
+    # with one 30-day gap is a plausible monthly bill) - but with only one
+    # interval it can never rate better than `weak` (see below).
+    recognized = bool(intervals) and cadence not in ("irregular", "single")
+    if len(months) < 3 and not recognized:
         return None
 
     shape, amount_detail, rep = classify_amounts([(p[2], p[3]) for p in postings])
@@ -200,14 +264,17 @@ def analyze(postings, today):
         overdue_after = 2.0 * median(intervals)
     else:
         overdue_after = None
-    if overdue_after and gap > overdue_after:
+    if overdue_after is not None and gap > overdue_after:
         status = f"overdue~{gap / dpp:.1f}x" if dpp else "overdue"
     else:
         status = "active"
 
+    # A single interval (two charges) can land in a cadence bucket by
+    # coincidence with regularity 1.0 - never enough for `yes`.
+    enough_intervals = len(intervals) >= 2
     if cadence in ("irregular", "single") or regularity < 0.5:
         recurring = "no"
-    elif regularity >= 0.75 and shape in ("identical", "step"):
+    elif enough_intervals and regularity >= 0.75 and shape in ("identical", "step"):
         recurring = "yes"
     else:
         recurring = "weak"
@@ -253,7 +320,9 @@ def build_report(postings, today):
         else:
             rows.append(fact)
 
-    rows.sort(key=lambda r: (_RANK[r["recurring"]], -float(r["approx_monthly"])))
+    rows.sort(key=lambda r: (
+        _RANK[r["recurring"]], -float(r["approx_monthly"]), r["payee"], r["commodity"],
+    ))
     return rows, skipped
 
 
@@ -280,13 +349,33 @@ def parse_args(argv):
 
 def main(argv):
     csv_path, today = parse_args(argv)
-    postings = read_postings(csv_path)
-    rows, skipped = build_report(postings, today)
+    try:
+        postings, drops = read_postings(csv_path)
+    except FileNotFoundError:
+        raise SystemExit(f"error: no such file: {csv_path}")
+    except OSError as e:
+        raise SystemExit(f"error: cannot read {csv_path}: {e}")
 
+    dropped = (
+        f"{drops['bad_date']} bad date, "
+        f"{drops['no_payee_or_account']} missing payee/account, "
+        f"{drops['no_positive_amount']} no positive amount"
+    )
+    if not postings:
+        raise SystemExit(
+            f"error: no usable expense postings in {csv_path} (rows dropped: "
+            f"{dropped}). Expected the CSV from "
+            'query report:"reg" account_pattern:"Expenses".'
+        )
+
+    rows, skipped = build_report(postings, today)
     print("# " + "\t".join(COLUMNS))
     for r in rows:
         print("\t".join(str(r[c]) for c in COLUMNS))
-    print(f"# skipped {skipped} payee/commodity group(s) with fewer than 3 charge months and no annual pair")
+    print(
+        f"# {skipped} group(s) dropped: seen in under 3 months and no clear "
+        f"cadence yet; rows dropped while reading: {dropped}"
+    )
     return 0
 
 
