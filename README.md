@@ -26,7 +26,10 @@ workspace.
 
 <!-- Keep this list in sync with the top-level skill folders. -->
 
-_None yet._
+- **budget** - builds a monthly and yearly per-account spending budget from
+  your last 13 months of expenses, writes it to `budget.md`, and refines it
+  with your input. Bundles `compute_budget.py` (uses `python3` when present,
+  with a no-Python fallback).
 
 ## Repository layout
 
