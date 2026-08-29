@@ -27,7 +27,9 @@ review.
 ## What belongs in memory
 
 Memory holds four kinds of thing: user-stated facts, preferences,
-categorization rules, and recurring arrangements.
+categorization rules, and recurring arrangements. (This restates the
+`# Memory` section of the system prompt for convenience; that section is
+authoritative if the two ever diverge.)
 
 Three kinds are named as never belonging there:
 
@@ -154,8 +156,10 @@ Only after the user has reviewed the report and said which findings to apply:
 - merges: edit the surviving entry to be complete, then delete the others in
   their own edits,
 - keep section headings and ordering otherwise untouched,
-- re-read the affected region after a multi-line edit to confirm the structure
-  still holds.
+- apply the findings one at a time, and re-read `memory.md` before each edit
+  in the sequence - every merge or deletion shifts the line numbers of the
+  findings still to come, so line numbers from the report are stale after the
+  first change.
 
 Leave every finding the user did not accept exactly as it was.
 
