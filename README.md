@@ -29,7 +29,9 @@ workspace.
 - **recurring-expenses** - detects the payments you make on a schedule (bills
   plus subscriptions) from 13 months of history and caches them in
   `recurring-expenses.md` at the workspace root. A builder for that cache, not
-  a report; other skills read the file instead of re-deriving it.
+  a report; other skills read the file instead of re-deriving it. Bundles
+  `detect_recurring.py` for the grouping and interval maths (uses `python3`
+  when present, with a by-hand fallback).
 
 ## Repository layout
 

@@ -69,28 +69,43 @@ that structure and use detection only to fill the gaps.
 1. Pull the last 13 months of expense postings with `query`: `report: "reg"`,
    `account_pattern: "Expenses"`, `begin_date: <13 months ago>`,
    `output_format: "csv"`. 13 months, not 12, so an annual payment appears
-   twice. For large ledgers, narrow follow-up queries with `payee_pattern`
-   instead of re-pulling.
-2. Group postings by payee. A payee is a recurring-charge candidate when all
-   hold:
-   - it appears in **3 or more distinct months** (or twice, ~1 year apart, for
-     annual payments), and
-   - the interval between charges is regular - monthly +/-4 days, weekly
-     +/-1 day, quarterly +/-1 week, yearly +/-2 weeks, and
-   - the amounts are identical, step between two stable values (a step is a
-     price change, not a disqualifier - record it), or fluctuate within a
-     stable band (a metered utility: same payee every month, varying amount).
-     Report a banded amount as a range, e.g. "~180-250".
-3. Regularity beats frequency: payees with irregular intervals (groceries,
-   restaurants, fuel - bought when needed, not on a schedule) are not
-   recurring, no matter how often they appear.
-4. One payee can hide both a recurring charge and ordinary shopping (Amazon
-   orders vs Prime, an Apple device vs Apple Music). Isolate the regular
-   series and judge it alone - never flag a payee wholesale.
-5. Payee spelling drifts ("Netflix" vs "NETFLIX.COM" vs "Netflix.com
-   Amsterdam") - normalize case and punctuation when grouping, and note which
-   payees you merged so the user can correct you.
-6. Count each real-world charge once: a PayPal-wrapped payment plus the
+   twice. Write the CSV to a real OS temp path with `bash` (e.g. `mktemp`) -
+   never under `files/` or anywhere in the git-tracked workspace.
+2. Run the bundled script to do the mechanical grouping and interval maths
+   deterministically: `python3 <skill directory>/detect_recurring.py <csv path>`.
+   This invocation itself tells you `<skill directory>`: right above this text
+   is a line reading "References are relative to `<path>`." - that `<path>` is
+   the directory this file lives in; use it directly, do not guess an absolute
+   path. Do not write ad-hoc bash/awk to group the rows yourself - that is
+   exactly what the script does (payee grouping with case/whitespace folding,
+   distinct-month counts, interval sequence, cadence guess, regularity score,
+   amount shape, approx-monthly normalization, and an overdue flag). It needs
+   only Python's standard library.
+   - Output: a `#`-commented header naming the columns, then one tab-separated
+     line per candidate payee, sorted by `recurring` guess (`yes`, `weak`,
+     `no`) then approx monthly cost. A trailing `#` line reports how many
+     payees it dropped for too little history. Pass `--today YYYY-MM-DD` only
+     to reproduce a past run.
+   - If `python3` is not on PATH, fall back to doing steps 3-7 by hand from
+     the CSV - group by payee, count distinct months, check interval
+     regularity - slower and more error-prone, but keeps the skill working.
+3. Take the script's `yes` rows as recurring. Review every `weak` row
+   yourself: a `banded` shape with high `regularity` and a bills-type account
+   (utilities, phone) is a real metered bill - keep it; a `weak` row that is
+   really irregular shopping - drop it. Ignore `no` rows unless the account
+   or payee name clearly says otherwise.
+4. Regularity beats frequency: a payee with `cadence: irregular` (groceries,
+   restaurants, fuel - bought when needed) is not recurring, no matter how
+   many postings it has.
+5. One payee can hide both a recurring charge and ordinary shopping (Amazon
+   orders vs Prime, an Apple device vs Apple Music). The script groups by
+   payee, so a mixed payee shows up as `irregular` or `banded` with a wide
+   range - judge the regular series alone, never flag a payee wholesale.
+6. Merge spelling variants the script left separate ("Netflix" vs
+   "NETFLIX.COM" vs "Netflix.com Amsterdam" - it only folds case and
+   whitespace). Sum their postings and note which rows you merged so the user
+   can correct you.
+7. Count each real-world charge once: a PayPal-wrapped payment plus the
    underlying merchant, or a card settlement plus the expenses it covers, is
    one charge - keep the expense side only.
 
@@ -178,10 +193,15 @@ memory on later refreshes.
 
 ## Boundaries
 
-- Read-only on the journal. The only file this skill writes is
-  `recurring-expenses.md` - never edit, validate, or commit journal entries.
+- Read-only on the journal. The only file this skill writes in the workspace
+  is `recurring-expenses.md` - never edit, validate, or commit journal
+  entries. The `reg` CSV is throwaway scratch data: keep it on a real OS temp
+  path, never under `files/` or anywhere git-tracked.
 - Not a report. If the user wants to see their recurring spending, hand off to
   `recurring-spending` or `subscription-audit` after the cache is built.
+- `detect_recurring.py` aggregates; it never decides. Merging real-merchant
+  spelling variants, judging a borderline cadence, and classifying bills vs
+  subscriptions are yours to do from its output.
 - If the ledger covers less than ~3 months, say the history is too short to
   detect recurrence and write no cache. Annual patterns need more than a year
   of history - note that in the file when the ledger is younger than that.
