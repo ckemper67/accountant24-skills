@@ -24,19 +24,22 @@ bank/CSV import, when mis-categorisations are most likely.
 
 ## Building the payee -> account map
 
-1. Pull every expense posting in machine-readable form with the `query` tool:
-   `report: "reg"`, `account_pattern: "expenses"`, `output_format: "tsv"`.
-   Every rubric below (Correct/Wrong/Unsure, Common wrong patterns) judges an
-   *expense* category, so scope to expenses only - pulling income too would
-   just add unclassifiable noise. `account_pattern: "expenses"` already
-   excludes transfers, opening balances, and reconciliations - they post to
-   assets/liabilities/equity - so no payee skip-list is needed.
+1. Pull expense postings in machine-readable form with the `query` tool:
+   `report: "reg"`, `account_pattern: "expenses"`, `output_format: "tsv"`,
+   `begin_date: <13 months ago>`. Every rubric below (Correct/Wrong/Unsure,
+   Common wrong patterns) judges an *expense* category, so scope to expenses
+   only - pulling income too would just add unclassifiable noise.
+   `account_pattern: "expenses"` already excludes transfers, opening
+   balances, and reconciliations - they post to assets/liabilities/equity -
+   so no payee skip-list is needed. Drop `begin_date` only when the user
+   explicitly wants the full history audited (old imports can hide stale
+   miscategorisations) and the ledger is small enough that the whole `reg`
+   dump won't blow the context - the `query` tool returns it inline.
    - Write the tsv the query returns to a real OS temp path with `bash`
      (`mktemp` plus a heredoc) - never under `files/` or anywhere in the
-     git-tracked workspace. On a ledger with a lot of history the inline
-     result can get large; if it looks truncated, narrow it with repeated
-     `payee_pattern` queries and append each batch to the same temp file
-     rather than trying to pull everything at once.
+     git-tracked workspace. If the inline result still looks truncated,
+     narrow it with repeated `payee_pattern` queries and append each batch to
+     the same temp file rather than pulling everything at once.
 2. Run the bundled script with `bash` to collapse the tsv deterministically:
    `python3 <skill directory>/map_payees.py <tsv path>`. This invocation
    itself tells you `<skill directory>`: right above this text is a line
@@ -133,10 +136,10 @@ Present findings, most actionable first.
   The journal still has the raw spellings until a proposed rename is actually
   applied - so for a unified payee, list every raw spelling as its own row
   (each with its own current account, since variants can differ) rather than
-  the canonical name alone. Applying this table (via `bulk_edit_transactions`)
-  needs the real, currently-matching payee strings; the
-  canonical name only exists once the Unify table above has been applied.
-  Suggest a target account that already
+  the canonical name alone. The raw spellings are what the report shows and
+  what the account fix matches on **if you skip the unification**; once a
+  unification is applied, the account fix must instead match the canonical
+  name (see the apply order below). Suggest a target account that already
   exists in the ledger (cross-check against the accounts list); if none fits,
   say a new account is needed rather than inventing one.
 - **Unsure** - a short list, each with the single question that would resolve it
@@ -146,10 +149,24 @@ Present findings, most actionable first.
 
 Offer to apply the findings: ask which corrections the user wants (all of
 them, just one table, one row at a time), then make the change with the
-built-in `bulk_edit_transactions` tool, then validate and commit.
-Apply unification renames before account fixes - it turns each Wrong row's
-list of raw spellings into one payee, so the account fix that follows is one
-edit instead of several.
+built-in `bulk_edit_transactions` tool in this exact order, then `validate`
+and `commit_and_push`:
+
+1. **Unifications first.** For each raw spelling in a Unify group, one call:
+   `action: "change_payee"`, `query: ["payee:^<raw spelling>$"]`,
+   `from: "<raw spelling>"`, `to: "<canonical name>"`. Anchoring the query
+   term and setting `from` both guard against renaming a look-alike payee.
+2. **Account fixes second, retargeted to the post-rename payee.** A Wrong-row
+   payee that was just unified no longer exists under its raw spelling, so
+   the account fix must match the **canonical** name:
+   `action: "change_account"`, `query: ["payee:^<canonical name>$"]` (use the
+   original name only for payees you did not unify), `from: "<current
+   account>"`, `to: "<suggested account>"`. If a unified group had variants
+   in different current accounts, that is one `change_account` call per
+   distinct current account, each now scoped to the canonical payee.
+
+Doing unifications first is also what collapses each Wrong row's list of raw
+spellings into a single account fix instead of one per spelling.
 
 ## Common wrong patterns
 

@@ -35,6 +35,15 @@ def main(path: str) -> None:
         # silently corrupting the payee string. Tabs/newlines can't appear in
         # hledger tsv fields, so QUOTE_NONE is safe and required here.
         reader = csv.DictReader(f, delimiter="\t", quoting=csv.QUOTE_NONE)
+        required = {"description", "account"}
+        if not required.issubset(reader.fieldnames or []):
+            missing = ", ".join(sorted(required.difference(reader.fieldnames or [])))
+            print(
+                f"error: tsv is missing column(s): {missing}. "
+                'Expected the output of query report:"reg" output_format:"tsv".',
+                file=sys.stderr,
+            )
+            sys.exit(1)
         for row in reader:
             payee = payee_of(row.get("description", ""))
             account = row.get("account", "").strip()
