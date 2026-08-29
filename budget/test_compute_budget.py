@@ -38,6 +38,33 @@ class TempDirTestCase(unittest.TestCase):
         return str(path)
 
 
+# ---- parse_number ----------------------------------------------------------
+
+
+class TestParseNumber(unittest.TestCase):
+    def test_should_parse_a_plain_decimal(self):
+        self.assertEqual(cb.parse_number("12.99"), 12.99)
+
+    def test_should_parse_us_grouped_notation(self):
+        self.assertEqual(cb.parse_number("1,234.56"), 1234.56)
+
+    def test_should_parse_european_grouped_notation(self):
+        self.assertEqual(cb.parse_number("1.234,56"), 1234.56)
+
+    def test_should_treat_a_lone_comma_before_three_digits_as_thousands(self):
+        self.assertEqual(cb.parse_number("1,234"), 1234.0)
+
+    def test_should_treat_a_lone_comma_before_two_digits_as_the_decimal_mark(self):
+        self.assertEqual(cb.parse_number("12,50"), 12.5)
+
+    def test_should_keep_the_sign(self):
+        self.assertEqual(cb.parse_number("-5"), -5.0)
+
+    def test_should_return_none_when_there_is_no_digit(self):
+        self.assertIsNone(cb.parse_number(""))
+        self.assertIsNone(cb.parse_number("x"))
+
+
 # ---- parse_cell -------------------------------------------------------------
 
 
@@ -59,6 +86,18 @@ class TestParseCell(unittest.TestCase):
 
     def test_should_strip_thousands_separators(self):
         self.assertEqual(cb.parse_cell("1,234.56 EUR"), {"EUR": 1234.56})
+
+    def test_should_parse_a_european_decimal_amount(self):
+        self.assertEqual(cb.parse_cell("-1.234,56 EUR"), {"EUR": -1234.56})
+
+    def test_should_parse_a_symbol_prefixed_commodity(self):
+        self.assertEqual(cb.parse_cell("$50.00"), {"$": 50.0})
+
+    def test_should_parse_a_symbol_prefixed_commodity_with_the_sign_after_the_symbol(self):
+        self.assertEqual(cb.parse_cell("$-123.13"), {"$": -123.13})
+
+    def test_should_parse_a_symbol_prefixed_commodity_with_the_sign_before_the_symbol(self):
+        self.assertEqual(cb.parse_cell("-$123.13"), {"$": -123.13})
 
     def test_should_parse_an_amount_with_no_decimal_part(self):
         self.assertEqual(cb.parse_cell("-123 USD"), {"USD": -123.0})
@@ -92,6 +131,19 @@ class TestMain(TempDirTestCase):
             code = e.code or 0
         return out.getvalue(), err.getvalue(), code
 
+    def test_should_error_on_an_empty_file(self):
+        path = self.write_csv([])
+        out, err, code = self.run_main(path)
+        self.assertEqual(code, 1)
+        self.assertIn("empty CSV", err)
+        self.assertEqual(out, "")
+
+    def test_should_error_when_the_header_has_no_period_columns(self):
+        path = self.write_csv([["account"]])
+        out, err, code = self.run_main(path)
+        self.assertEqual(code, 1)
+        self.assertIn("empty CSV or no period columns", err)
+
     def test_should_error_when_fewer_than_2_period_columns(self):
         path = self.write_csv([["account", "2026-03"]])
         out, err, code = self.run_main(path)
@@ -123,6 +175,29 @@ class TestMain(TempDirTestCase):
         lines = out.strip().splitlines()
         self.assertEqual(len(lines), 1)
         self.assertTrue(lines[0].startswith("Expenses:Groceries\t"))
+
+    def test_should_skip_hledgers_trailing_total_row(self):
+        path = self.write_csv(
+            [
+                ["account", "2026-01", "2026-02", "2026-03"],
+                ["Expenses:Groceries", "100.00 EUR", "100.00 EUR", "50.00 EUR"],
+                ["total", "100.00 EUR", "100.00 EUR", "50.00 EUR"],
+            ]
+        )
+        out, _, _ = self.run_main(path)
+        lines = out.strip().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("Expenses:Groceries\t"))
+
+    def test_should_not_skip_an_account_named_total_inside_a_hierarchy(self):
+        path = self.write_csv(
+            [
+                ["account", "2026-01", "2026-02", "2026-03"],
+                ["Expenses:Total", "10.00 EUR", "10.00 EUR", "5.00 EUR"],
+            ]
+        )
+        out, _, _ = self.run_main(path)
+        self.assertTrue(out.strip().startswith("Expenses:Total\t"))
 
     def test_should_skip_an_account_whose_cells_are_all_zero_or_empty(self):
         path = self.write_csv(
