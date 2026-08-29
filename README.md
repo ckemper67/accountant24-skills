@@ -26,7 +26,10 @@ workspace.
 
 <!-- Keep this list in sync with the top-level skill folders. -->
 
-_None yet._
+- **weekly-recap** - a three-part weekly check-in: how net worth moved over
+  the last 7 days, what you spent on and where, and which recurring payments
+  are due in the next 7. Read-only; reads the `recurring-expenses` cache for
+  the third part.
 
 ## Repository layout
 
