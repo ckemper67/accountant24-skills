@@ -26,7 +26,10 @@ workspace.
 
 <!-- Keep this list in sync with the top-level skill folders. -->
 
-_None yet._
+- **memory-review** - audits `memory.md` against the rules for what memory is
+  for, reports what has drifted (duplicates, transaction-level detail, stale
+  status notes, relative dates, structural problems), and applies only the
+  fixes you confirm. Read-only until you approve each change.
 
 ## Repository layout
 
