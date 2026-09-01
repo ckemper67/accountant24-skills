@@ -1,0 +1,197 @@
+---
+name: payee-audit
+description: Reviews how your payees are categorised and flags mis-categorised ones - payees posting to the wrong expense account, to inconsistent accounts, or to expenses:uncategorized. Also spots spelling variants of the same payee (e.g. "NETFLIX.COM" vs "Netflix") and proposes unifying them first, so the category fix that follows is one change instead of several. Best run after setting up accounts or after a large import. Detects and reports read-only, then offers to apply the corrections for you once you confirm. Ask things like "validate my categories", "are my payees categorised correctly", "check for miscategorised transactions", "which payees are in the wrong account", or "do I have duplicate payee names". This is about category correctness, not recurrence - for bills and subscriptions, use the recurring-spending or subscription-audit skills instead.
+---
+
+# Payee Audit
+
+Surface payees whose expense category (account) is wrong, inconsistent, or
+questionable, and propose a corrected mapping for each - after first proposing
+to unify any spelling variants of the same payee, so the category fix that
+follows is one edit instead of several. Detecting and reporting is
+**read-only**: use the `query` tool to read the ledger, and the bundled
+`map_payees.py` script (via `bash`) only to collapse that output into a payee
+-> account map - never edit, validate, or commit the journal while building
+the report. Once findings are presented, offer to apply them yourself: use
+the built-in `bulk_edit_transactions` tool (`change_payee` for unifications,
+`change_account` for category fixes), then validate and commit, but only
+after the user confirms which corrections to apply. Don't make the user do
+the mechanical work of applying a fix themselves; that's the point of
+offering.
+
+Best run periodically - after setting up the chart of accounts, or after a large
+bank/CSV import, when mis-categorisations are most likely.
+
+## Building the payee -> account map
+
+1. Pull expense postings in machine-readable form with the `query` tool:
+   `report: "reg"`, `account_pattern: "expenses"`, `output_format: "tsv"`,
+   `begin_date: <13 months ago>`. Every rubric below (Correct/Wrong/Unsure,
+   Common wrong patterns) judges an *expense* category, so scope to expenses
+   only - pulling income too would just add unclassifiable noise.
+   `account_pattern: "expenses"` already excludes transfers, opening
+   balances, and reconciliations - they post to assets/liabilities/equity -
+   so no payee skip-list is needed. Drop `begin_date` only when the user
+   explicitly wants the full history audited (old imports can hide stale
+   miscategorisations) and the ledger is small enough that the whole `reg`
+   dump won't blow the context - the `query` tool returns it inline.
+   - Write the tsv the query returns to a real OS temp path with `bash`
+     (`mktemp` plus a heredoc) - never under `files/` or anywhere in the
+     git-tracked workspace. If the inline result still looks truncated,
+     narrow it with repeated `payee_pattern` queries and append each batch to
+     the same temp file rather than pulling everything at once.
+2. Run the bundled script with `bash` to collapse the tsv deterministically:
+   `python3 <skill directory>/map_payees.py <tsv path>`. This invocation
+   itself tells you `<skill directory>`: right above this text is a line
+   reading "References are relative to `<path>`." - that `<path>` is the
+   directory this file lives in; use it directly, do not guess an absolute
+   path. `<tsv path>` is the temp file you wrote in step 1. Do not write
+   ad-hoc bash/awk to group the rows yourself; that is exactly what the
+   script does. It needs only Python's standard library (no pip install).
+   - Output: one line per payee, tab-separated - an optional `MULTI` flag,
+     the payee, then `account (count)` pairs sorted by count descending.
+     `MULTI` marks payees posting to more than one account; a single-account
+     payee can still be miscategorised (see Classifying below).
+   - If `python3` is not on PATH, fall back to collapsing the tsv yourself
+     (group by payee, count accounts) - slower and more error-prone, but keeps
+     the skill working everywhere.
+
+## Unifying payee names first
+
+Before classifying accounts, scan the raw payee list from step 2 for spelling
+variants of the same real-world merchant - the script deliberately does not
+group these itself (judging which strings are the same merchant, and what to
+call the merged result, needs real judgment, not a heuristic). Do this first:
+once a group of variants is unified under one canonical name, the account
+correction that follows is a single edit against that name ("recategorize
+Netflix to expenses:subscriptions") instead of a separate edit per spelling.
+
+- Look for case/punctuation/domain-suffix differences ("NETFLIX.COM",
+  "Netflix", "Netflix.com") - these are almost always the same merchant.
+- Be more careful with location suffixes or abbreviations ("Shell" vs "Shell
+  Amsterdam", "Whole Foods" vs "WF Market") - confirm they share a consistent
+  account and transaction pattern before treating them as one payee; don't
+  merge two genuinely different merchants just because their names are
+  similar.
+- For each confirmed group, note the total posting count (sum the
+  per-account counts from step 2 across all variants in the group) - that
+  tells the user how large the rename is before they commit to it. This counts
+  postings, not distinct transactions - a transaction split across two expense
+  postings (e.g. groceries and alcohol on one receipt) counts twice; call that
+  out rather than presenting it as an exact transaction count.
+- Propose the unification; do not merge anything in the journal yourself.
+
+## Classifying each payee
+
+Judge every **unified** payee (variants merged under their canonical name)
+against its account(s) and sort into three buckets. The full map must be
+reviewed - a payee mapping consistently to a single *wrong* account is just as
+much a bug as an inconsistent one, and only reading the mapping catches it.
+
+### Correct
+The payee clearly matches its account and maps to one reasonable account.
+Examples: a supermarket -> groceries, a gas station -> fuel, a streaming service
+-> subscriptions, a phone carrier -> utilities:phone, an insurer -> insurance.
+
+### Wrong
+Any of:
+- **Name contradicts the account** - a gas station under groceries, an airline
+  under shopping.
+- **Bank-category bleed** - the bank's own label was kept instead of the real
+  merchant type (supermarkets landing in "Merchandise"/"Shopping" from a card
+  import).
+- **Uncategorised** - posts to `expenses:uncategorized`, never reviewed after
+  import.
+- **Inconsistent** - the same unified payee maps to more than one expense
+  account with no real reason (combine the account counts from step 2 across
+  its variants to see this clearly - unifying first is what surfaces cases
+  that were hidden behind two different spellings each posting to a different
+  account). A genuine split is fine (an Amazon device vs Amazon groceries) -
+  judge the series, don't flag a payee wholesale.
+
+### Unsure
+Can't decide without more context - flag for the user rather than guessing:
+- General/department or merchandise stores (clothing? household? electronics?).
+- Drugstores and multi-purpose shops (toiletries and food).
+- Peer-to-peer payments (Venmo, Zelle, PayPal) - depends what was paid for.
+- Hardware / auto-parts stores - a home project or a car repair.
+- Online marketplaces (Amazon, eBay) where the item bought is unknown.
+
+## Reporting
+
+Present findings, most actionable first.
+
+- **Unify payee names** - if any spelling-variant groups were found, a table
+  presented before the account corrections (unifying first is what makes those
+  corrections a single edit instead of several):
+
+  | Raw spellings found | Suggested canonical name | Postings affected |
+
+  Say why they're the same merchant. Skip this table entirely when no
+  variants were found - don't force an empty section.
+- **Wrong** - a table the user can act on:
+
+  | Payee (as it appears in the journal) | Current account | Suggested account | Why |
+
+  The journal still has the raw spellings until a proposed rename is actually
+  applied - so for a unified payee, list every raw spelling as its own row
+  (each with its own current account, since variants can differ) rather than
+  the canonical name alone. The raw spellings are what the report shows and
+  what the account fix matches on **if you skip the unification**; once a
+  unification is applied, the account fix must instead match the canonical
+  name (see the apply order below). Suggest a target account that already
+  exists in the ledger (cross-check against the accounts list); if none fits,
+  say a new account is needed rather than inventing one.
+- **Unsure** - a short list, each with the single question that would resolve it
+  ("Amazon - was this the Prime membership or a purchase?").
+- **Correct** - just a count ("31 payees look correctly categorised"); don't
+  enumerate them.
+
+Offer to apply the findings: ask which corrections the user wants (all of
+them, just one table, one row at a time), then make the change with the
+built-in `bulk_edit_transactions` tool in this exact order, then `validate`
+and `commit_and_push`:
+
+1. **Unifications first.** For each raw spelling in a Unify group, one call:
+   `action: "change_payee"`, `query: ["payee:^<raw spelling>$"]`,
+   `from: "<raw spelling>"`, `to: "<canonical name>"`. Anchoring the query
+   term and setting `from` both guard against renaming a look-alike payee.
+2. **Account fixes second, retargeted to the post-rename payee.** A Wrong-row
+   payee that was just unified no longer exists under its raw spelling, so
+   the account fix must match the **canonical** name:
+   `action: "change_account"`, `query: ["payee:^<canonical name>$"]` (use the
+   original name only for payees you did not unify), `from: "<current
+   account>"`, `to: "<suggested account>"`. If a unified group had variants
+   in different current accounts, that is one `change_account` call per
+   distinct current account, each now scoped to the canonical payee.
+
+Doing unifications first is also what collapses each Wrong row's list of raw
+spellings into a single account fix instead of one per spelling.
+
+## Common wrong patterns
+
+| Payee pattern | Wrong account | Likely right | Root cause |
+|---|---|---|---|
+| Gas station that also sells food | groceries | transport:fuel | Combined store + pump |
+| Supermarket from a card import | shopping | food:groceries | Bank category = "Merchandise" |
+| Subscription / SaaS | shopping | subscriptions:* | Import missed the merchant type |
+| Anything in expenses:uncategorized | uncategorized | varies | Never reviewed post-import |
+
+## Boundaries
+
+- **Read-only while detecting and reporting.** Never edit, validate, or commit
+  the journal while building the payee -> account map or the findings report.
+- **Confirm before applying.** After presenting findings, offer to apply the
+  corrections yourself - never edit, validate, or commit until the user has
+  confirmed which ones they want.
+- Don't invent target accounts - suggest only accounts that already exist in the
+  ledger, or say a new one is needed.
+- Don't merge payees on name similarity alone - two different real-world
+  merchants can have similar names. Confirm a shared account pattern before
+  proposing a unification, and when unsure, leave them separate rather than
+  guessing.
+- If the ledger is nearly empty or freshly scaffolded, say there is not enough
+  history to validate instead of guessing.
+- The tsv temp file you write in step 1 is throwaway data, not a ledger
+  record - keep it on a real OS temp path (`mktemp`), never under `files/` or
+  anywhere else in the git-tracked workspace.
