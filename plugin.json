@@ -3,6 +3,10 @@
   "name": "ckemper-accountant24",
   "description": "Custom skills for the Accountant24 agent.",
   "keywords": [
-    "budget"
+    "budget",
+    "memory-review",
+    "payee-audit",
+    "recurring-expenses",
+    "weekly-recap"
   ]
 }
