@@ -26,7 +26,13 @@ workspace.
 
 <!-- Keep this list in sync with the top-level skill folders. -->
 
-_None yet._
+- **ledger-audit** - runs a structural health check over the whole journal
+  (wrong-sign balances, missing account types, postings offset to
+  `equity:opening-balances`, disconnected credit-card payment chains,
+  duplicate imports, missing mortgage amortization, unreconciled and
+  historically-wrong balances, data gaps, posting-date drift), writes
+  `ledger-audit.md`, and offers the few safe fixes. Bundles `audit_ledger.py`
+  (runs `hledger` directly; standard library only).
 
 ## Repository layout
 
