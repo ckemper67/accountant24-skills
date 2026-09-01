@@ -1,6 +1,6 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "accountant24-skills",
+  "name": "ckemper-accountant24",
   "description": "Custom skills for the Accountant24 agent.",
   "keywords": [
     "budget"
