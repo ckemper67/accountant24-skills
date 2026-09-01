@@ -56,6 +56,14 @@ or transfer activity) and compare its `Txns`, `Payees/descriptions`, and
   redo the full detection so `First charged`, cadence, and the price history
   stay derived from the same window.
 
+## Sign convention
+
+This ledger follows the standard hledger convention: assets and expenses are
+positive, income and liabilities and equity are negative. `reg Expenses`
+returns charges as positive amounts - never pass `invert` to the `query`
+tool. `detect_recurring.py` keeps only positive rows; a negative amount is a
+refund/credit and is not part of a recurring charge series.
+
 ## Detecting recurring charges
 
 If the journal already encodes recurrence - an account hierarchy like
