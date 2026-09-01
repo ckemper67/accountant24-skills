@@ -28,10 +28,10 @@ validate, or commit the journal while building or revising a budget.
    when nothing has posted to an account yet this month), `depth: 2` or `3`
    (deep enough for meaningful categories - Groceries, not just Expenses;
    shallow enough to stay readable - usually not the full account path),
-   `output_format: "csv"`, `invert: true` (so expenses read as positive
-   spend, not the ledger's native negative sign). This returns one row per
-   account with one column per period; the script drops hledger's trailing
-   `total` row for you.
+   `output_format: "csv"`. Do not pass `invert` - `bal Expenses` already
+   returns spend as positive (see "Sign convention" below). This returns one
+   row per account with one column per period; the script drops hledger's
+   trailing `total` row for you.
 3. Write that CSV to a real OS temp path with `bash` (e.g. `mktemp` plus a
    heredoc) - never under `files/` or anywhere else in the git-tracked
    workspace, it's throwaway scratch data.
@@ -60,6 +60,15 @@ validate, or commit the journal while building or revising a budget.
 6. If the ledger has less than ~6 full months of history, say the sample is
    too small for a reliable budget and ask the user whether to proceed
    anyway rather than silently guessing.
+
+## Sign convention
+
+This ledger follows the standard hledger convention: assets and expenses are
+positive, income and liabilities and equity are negative. `bal Expenses`
+therefore returns spend as a positive number already - never pass `invert` to
+the `query` tool to "fix" a sign. A negative figure in an expense column is a
+real net refund/credit for that month; `compute_budget.py` keeps it signed so
+it nets against the rest.
 
 ## Computing the proposal
 

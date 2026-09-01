@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Aggregate an hledger `bal ... --period monthly -O csv --invert` dump into
+"""Aggregate an hledger `bal ... --period monthly -O csv` dump into
 per-account, per-currency monthly figures.
 
 Usage: python3 compute_budget.py <csv_file>
 
 Input: the CSV hledger emits for a multi-period balance report - a header row
 of "account" then one column per period (e.g. "2025-07", "2025-08", ...), and
-one data row per account. A cell holds one or more signed amounts, e.g.
-"0", "-123.13 USD", "$-123.13", "-1.234,56 EUR", or
-"-356.42 EUR, -607.87 USD" for a multi-currency posting in that
-account/period. hledger's trailing "total" row is ignored.
+one data row per account. Expense balances come out positive (no `--invert`);
+a cell holds one or more signed amounts, e.g. "0", "123.13 USD", "$123.13",
+"1.234,56 EUR", or "356.42 EUR, 607.87 USD" for a multi-currency posting in
+that account/period. A negative cell is a net refund/credit month and is kept
+as-is. hledger's trailing "total" row is ignored.
 
 Amounts: either ',' or '.' may be the decimal mark (hledger follows the
 journal's `decimal-mark`); "1,234.56" and "1.234,56" both parse to 1234.56.
@@ -27,8 +28,9 @@ Prints one line per account/currency, tab-separated:
   the actual monthly trend and decide what counts as an outlier or a
   seasonal/annual pattern - that judgment call is deliberately left to the
   model, not this script. Averages are computed by netting each month's
-  already-inverted signed value (not summing absolute values), so a refund
-  or credit correctly reduces the total instead of adding to it.
+  signed value (not summing absolute values), so a refund or credit - which
+  lands as a negative amount in that month's cell - correctly reduces the
+  total instead of adding to it.
 """
 import csv
 import re
