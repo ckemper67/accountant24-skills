@@ -9,6 +9,19 @@ Give the user a short, three-part status update on the last 7 days and the 7
 ahead. This is a read-only analysis: use the `query` tool only - never modify
 the journal in this workflow.
 
+## Sign convention
+
+This ledger follows the standard hledger convention: assets and expenses are
+positive, income and liabilities and equity are negative. Consequences for
+this skill:
+
+- `bal Assets|Liabilities` nets straight to net worth - a positive asset
+  balance plus a negative liability balance. Do not pass `invert`.
+- `bal Expenses` returns spend as a positive number; do not pass `invert`.
+- Income postings are negative. To check whether spending stayed within
+  income, compare the week's positive spend total against the magnitude of
+  the (negative) income total for the same window.
+
 ## 1. Net worth changes over the last week
 
 Compare total Assets + Liabilities now vs. 7 days ago:
