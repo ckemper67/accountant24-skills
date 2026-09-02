@@ -30,6 +30,13 @@ workspace.
   your last 13 months of expenses, writes it to `budget.md`, and refines it
   with your input. Bundles `compute_budget.py` (uses `python3` when present,
   with a no-Python fallback).
+- **ledger-audit** - runs a structural health check over the whole journal
+  (wrong-sign balances, missing account types, postings offset to
+  `equity:opening-balances`, disconnected credit-card payment chains,
+  duplicate imports, missing mortgage amortization, unreconciled and
+  historically-wrong balances, data gaps, posting-date drift), writes
+  `ledger-audit.md`, and offers the few safe fixes. Bundles `audit_ledger.py`
+  (runs `hledger` directly; standard library only).
 - **memory-review** - audits `memory.md` against the rules for what memory is
   for, reports what has drifted (duplicates, transaction-level detail, stale
   status notes, relative dates, structural problems), and applies only the

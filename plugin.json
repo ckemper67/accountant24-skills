@@ -4,6 +4,7 @@
   "description": "Custom skills for the Accountant24 agent.",
   "keywords": [
     "budget",
+    "ledger-audit",
     "memory-review",
     "payee-audit",
     "recurring-expenses",
